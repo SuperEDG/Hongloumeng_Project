@@ -3,7 +3,7 @@ import json
 
 def process_file(file_path):
     # Read content from the file
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding='utf-8',  mode = 'r') as f:
         content = f.read()
         # Split the content by space
         space_split = content.split()
