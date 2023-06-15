@@ -1,145 +1,87 @@
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from transformers import BertModel, BertTokenizer
-from torchcrf import CRF
-from ner_data_processor import NERDataProcessor
-from bert_bilstm_crf_ner import BertBiLSTMCRF
-import sys
 import numpy as np
+from transformers import BertTokenizer
+from torchcrf import CRF
+from torch.utils.data import DataLoader, TensorDataset
+import torch.nn as nn
+from transformers import BertModel
 
-def load_model(model_weights_path, device):
-    # Load tokenizer and define label_map
-    tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
-    label_map = {"B-ORG": 1, "I-ORG": 2, "O": 0}
-    num_tags = len(label_map)
+# Define the model
+class BertBiLSTMCRF(nn.Module):
+    def __init__(self, bert_model, num_tags, lstm_hidden_dim, device):
+        super(BertBiLSTMCRF, self).__init__()
+        self.bert = bert_model  # Load the pre-trained BERT model
+        self.lstm = nn.LSTM(bert_model.config.hidden_size, lstm_hidden_dim, num_layers=1, bidirectional=True, batch_first=True)  # Bi-directional LSTM layer
+        self.fc = nn.Linear(lstm_hidden_dim * 2, num_tags)  # Fully connected layer
+        self.crf = CRF(num_tags, batch_first=True)  # CRF layer for sequence labeling
+        self.device = device
 
-    # Load BERT model and initialize the BERT+BiLSTM+CRF model
-    bert_model = BertModel.from_pretrained("bert-base-chinese").to(device)
-    lstm_hidden_dim = 128
-    model = BertBiLSTMCRF(bert_model, num_tags, lstm_hidden_dim, device).to(device)
+    def forward(self, input_ids, attention_masks, tags=None):
+        bert_outputs = self.bert(input_ids, attention_mask=attention_masks)  # Get the BERT output
+        lstm_outputs, _ = self.lstm(bert_outputs[0])  # Process the BERT output with LSTM
+        logits = self.fc(lstm_outputs)  # Process the LSTM output with the fully connected layer
 
-    # Load model weights
-    model.load_state_dict(torch.load(model_weights_path, map_location=device))
+        if tags is not None:  # If tags are provided, compute the loss
+            loss = -1 * self.crf(torch.log_softmax(logits, dim=2), tags, mask=attention_masks.bool(), reduction="mean")
+            return {"loss": loss}
+        else:  # If no tags are provided, decode the predictions
+            emissions = torch.log_softmax(logits, dim=2)
+            predictions = self.crf.decode(emissions, mask=attention_masks.bool())
+            return {"emissions": emissions, "predictions": predictions}
+
+def main(model_weights_path):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")  # Load the tokenizer
+    label_map = {"B-ORG": 1, "I-ORG": 2, "O": 0}  # Define the label mapping
+    num_tags = len(label_map)  # Get the number of tags
+    max_length = 128  # Define the maximum length of input sentences
+
+    bert_model = BertModel.from_pretrained("bert-base-chinese")  # Load the pre-trained BERT model
+    lstm_hidden_dim = 256  # Define the hidden dimension of the LSTM
+    model = BertBiLSTMCRF(bert_model, num_tags, lstm_hidden_dim, device).to(device)  # Instantiate the model
+
+    model.load_state_dict(torch.load(model_weights_path, map_location=device))  # Load the model weights
+    model.eval()  # Set the model to evaluation mode
 
     return model, tokenizer, label_map
 
-def predict_on_test_data(model, tokenizer, label_map, test_file, device):
-    # Initialize the NERDataProcessor
-    data_processor = NERDataProcessor(tokenizer, label_map)
-
-    # Read test data
-    tokens, labels = data_processor.read_bio_data(test_file)
-
-    # Tokenize and prepare test data
-    input_ids, attention_masks, tag_ids = data_processor.tokenize_and_prepare_data(tokens, labels)
-
-    # Convert test data to tensors
-    input_ids = torch.tensor(input_ids, dtype=torch.long)
-    attention_masks = torch.tensor(attention_masks, dtype=torch.long)
-    tag_ids = torch.tensor(tag_ids, dtype=torch.long)
-
-    # Create DataLoader for test data
-    test_data = TensorDataset(input_ids, attention_masks, tag_ids)
-    test_dataloader = DataLoader(test_data, batch_size=32)
-
-    # Predict on test data
-    true_labels, pred_labels = [], []
-    for batch in test_dataloader:
-        input_ids, attention_masks, tag_ids = tuple(t.to(device) for t in batch)
-        predictions = model(input_ids, attention_masks)
-
-        for i, pred in enumerate(predictions):
-            cur_true_labels = tag_ids[i].cpu().tolist()
-            cur_pred_labels = pred
-            cur_attention_mask = attention_masks[i].cpu().tolist()
-
-            # Remove padding tokens
-            cur_true_labels = [label for idx, label in enumerate(cur_true_labels) if cur_attention_mask[idx] != 0]
-            cur_pred_labels = [label for idx, label in enumerate(cur_pred_labels) if cur_attention_mask[idx] != 0]
-
-            true_labels.extend(cur_true_labels)
-            pred_labels.extend(cur_pred_labels)
-
-    return true_labels, pred_labels
-
-def predict(model, tokenizer, label_map, input_sentence, device):
-    model.eval()
-
-    # Tokenize input_sentence
-    tokens = tokenizer.tokenize(input_sentence)
-    input_ids = tokenizer.convert_tokens_to_ids(tokens)
-    attention_masks = [1] * len(input_ids)
-
-    # Pad input_ids and attention_masks
-    max_len = 128
-    padding_length = max_len - len(input_ids)
-    input_ids = input_ids + ([0] * padding_length)
-    attention_masks = attention_masks + ([0] * padding_length)
-
-    # Convert to tensors
-    input_ids = torch.tensor([input_ids], dtype=torch.long).to(device)
-    attention_masks = torch.tensor([attention_masks], dtype=torch.long).to(device)
-
-    # Make prediction
+def process_sentence(sentence, model, tokenizer, label_map, max_length):
+    inputs = tokenizer.encode_plus(sentence, return_tensors='pt', max_length=max_length, truncation=True, padding='max_length')  # Tokenize and encode the input sentence
+    inputs.to(model.device)  # Move the inputs to the same device as the model
     with torch.no_grad():
-        predictions = model(input_ids, attention_masks)
+        outputs = model(inputs["input_ids"], inputs["attention_mask"])  # Get the model predictions
 
-    # Convert predicted label_ids to labels
-    label_ids = predictions[0]
-    labels = [key for idx in label_ids for key, value in label_map.items() if value == idx]
+    id2label = {v: k for k, v in label_map.items()}  # Create a mapping from label index to label string
+    predictions = outputs["predictions"][0]  # Get the predicted labels
 
-    # Extract named entities
-    named_entities = []
-    entity = ""
-    for token, label in zip(tokens, labels):
-        if label == "B-ORG":
+    entities = []
+    entity = []
+    for i, pred in enumerate(predictions):
+        if pred == label_map['O']:  # If the predicted label is 'O', it is outside of any entity
             if entity:
-                named_entities.append(entity)
-                entity = ""
-            entity = token
-        elif label == "I-ORG":
-            entity += token
-        else:
+                entities.append("".join(entity))  # Add the current entity to the list of entities
+                entity = []  # Reset the entity buffer
+            continue
+        if id2label[pred][0] == 'B':  # If the predicted label starts with 'B', it is the beginning of a new entity
             if entity:
-                named_entities.append(entity)
-                entity = ""
-
+                entities.append("".join(entity))  # Add the current entity to the list of entities
+                entity = []  # Reset the entity buffer
+            entity.append(tokenizer.decode(inputs["input_ids"][0][i]))  # Add the current token to the entity buffer
+        else:  # If the predicted label starts with 'I', it is inside an entity
+            entity.append(tokenizer.decode(inputs["input_ids"][0][i]))  # Add the current token to the entity buffer
     if entity:
-        named_entities.append(entity)
+        entities.append("".join(entity))  # Add the last entity to the list of entities
 
-    return named_entities
+    return entities
 
-def predict_batch(model, tokenizer, label_map, input_file, output_file, device):
-    with open(input_file, "r", encoding="utf-8") as f:
-        sentences = f.readlines()
-
-    with open(output_file, "w", encoding="utf-8") as f:
-        for sentence in sentences:
-            sentence = sentence.strip()
-            named_entities = predict(model, tokenizer, label_map, sentence, device)
-            f.write(f"{sentence}\n")
-            f.write("Named entities: " + ", ".join(named_entities) + "\n\n")
-
-
+# Execute the main function if the script is run as the main program
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model_weights_path = "bert_bilstm_crf_model_weights.pth"
-    model, tokenizer, label_map = load_model(model_weights_path, device)
+    model_weights_path = "bert_bilstm_crf_model_weights.pth"  # Path to the model weights
+    model, tokenizer, label_map = main(model_weights_path)  # Load the model, tokenizer, and label map
 
-    test_file = "../data/processed/test_bio.txt"
-    true_labels, pred_labels = predict_on_test_data(model, tokenizer, label_map, test_file, device)
-    print("True labels:", true_labels)
-    print("Predicted labels:", pred_labels)
-
-    """
-    input_sentences.txt is a text file containing multiple sentences, with one sentence per line. Each sentence should be on a separate line.
-    output_results.txt is the output file that will contain the named entity predictions for each sentence in the input file. The results will be saved in a human-readable format, with the original sentence followed by the list of named entities detected.
-    """
-    if len(sys.argv) > 2:
-        input_file = sys.argv[1]
-        output_file = sys.argv[2]
-        predict_batch(model, tokenizer, label_map, input_file, output_file, device)
-        print(f"Batch prediction completed. Results saved to {output_file}")
-    else:
-        print("Usage: python predict.py <input_file> <output_file>")
+    input_sentences = ["那僧笑道：", "杭州的西湖美丽极了,贾宝玉说道"]  # Example input sentences
+    for sentence in input_sentences:
+        entities = process_sentence(sentence, model, tokenizer, label_map, max_length=128)  # Process each sentence
+        print("Input Sentence:", sentence)
+        print("Predicted Entities:", entities)
+        print()

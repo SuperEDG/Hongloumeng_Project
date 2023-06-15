@@ -1,13 +1,73 @@
+import os
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from transformers import BertModel, BertTokenizer, AdamW, get_linear_schedule_with_warmup
-from torchcrf import CRF
-from ner_data_processor import NERDataProcessor
 import numpy as np
+import torch.nn as nn
+from torchcrf import CRF
+from transformers import BertModel, BertTokenizer, AdamW, get_linear_schedule_with_warmup
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import classification_report
 
-# Define the BERT+BiLSTM+CRF model
+# Define a class to process NER data
+class NERDataProcessor:
+    # Initialize the processor
+    def __init__(self, tokenizer, label_map, max_length=128):
+        self.tokenizer = tokenizer
+        self.label_map = label_map
+        self.max_length = max_length
+
+    # Function to read the BIO format data
+    def read_bio_data(self, file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        tokens, labels = [], []
+        sentence, tags = [], []
+        for line in lines:
+            if line.strip() == "":
+                if sentence and tags:
+                    tokens.append(sentence)
+                    labels.append(tags)
+                sentence, tags = [], []
+            else:
+                token, label = line.strip().split()
+                sentence.append(token)
+                tags.append(label)
+
+        return tokens, labels
+
+    # Function to tokenize and prepare the data
+    def tokenize_and_prepare_data(self, tokens, labels):
+        input_ids, attention_masks, tag_ids = [], [], []
+
+        for token_list, label_list in zip(tokens, labels):
+            inputs = self.tokenizer.encode_plus(token_list, is_split_into_words=True, add_special_tokens=True, max_length=self.max_length, padding='max_length', truncation=True)
+
+            input_ids.append(inputs["input_ids"])
+            attention_masks.append(inputs["attention_mask"])
+
+            subword_lengths = []
+            for word in token_list:
+                subword_lengths.append(len(self.tokenizer.tokenize(word)))
+            expanded_labels = []
+            for label, sub_len in zip(label_list, subword_lengths):
+                expanded_labels.extend([self.label_map[label]] * sub_len)
+
+            expanded_labels = [self.label_map['O']] + expanded_labels + [self.label_map['O']]
+
+            if len(expanded_labels) < self.max_length:
+                expanded_labels = expanded_labels + [0] * (self.max_length - len(expanded_labels))
+            else:
+                expanded_labels = expanded_labels[:self.max_length]
+
+            tag_ids.append(expanded_labels)
+
+        input_ids = np.array(input_ids, dtype=int)
+        attention_masks = np.array(attention_masks, dtype=int)
+        tag_ids = np.array(tag_ids, dtype=int)
+
+        return input_ids, attention_masks, tag_ids
+
+# Define the model class
 class BertBiLSTMCRF(nn.Module):
     def __init__(self, bert_model, num_tags, lstm_hidden_dim, device):
         super(BertBiLSTMCRF, self).__init__()
@@ -24,11 +84,13 @@ class BertBiLSTMCRF(nn.Module):
 
         if tags is not None:
             loss = -1 * self.crf(torch.log_softmax(logits, dim=2), tags, mask=attention_masks.bool(), reduction="mean")
-            return loss
+            return {"loss": loss}
         else:
-            predictions = self.crf.decode(logits, mask=attention_masks.bool())
-            return predictions
+            emissions = torch.log_softmax(logits, dim=2)
+            predictions = self.crf.decode(emissions, mask=attention_masks.bool())
+            return {"emissions": emissions, "predictions": predictions}
 
+# Define the main function
 def main(train_file, val_file, batch_size, epochs, model_weights_path):
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -41,103 +103,73 @@ def main(train_file, val_file, batch_size, epochs, model_weights_path):
     # Initialize the NERDataProcessor
     data_processor = NERDataProcessor(tokenizer, label_map)
 
-    # Read training data
-    tokens, labels = data_processor.read_bio_data(train_file)
-
-    # Tokenize and prepare training data
-    input_ids, attention_masks, tag_ids = data_processor.tokenize_and_prepare_data(tokens, labels)
-
-    # Convert training data to tensors
-    input_ids = torch.tensor(input_ids, dtype=torch.long)
-    attention_masks = torch.tensor(attention_masks, dtype=torch.long)
-    tag_ids = torch.tensor(tag_ids, dtype=torch.long)
-
-    # Create DataLoader for training data
-    train_data = TensorDataset(input_ids, attention_masks, tag_ids)
-    train_dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-
-    # Read validation data
-    val_tokens, val_labels = data_processor.read_bio_data(val_file)
-
-    # Tokenize and prepare validation data
-    val_input_ids, val_attention_masks, val_tag_ids = data_processor.tokenize_and_prepare_data(val_tokens, val_labels)
-
-    # Convert validation data to tensors
-    val_input_ids = torch.tensor(val_input_ids, dtype=torch.long)
-    val_attention_masks = torch.tensor(val_attention_masks, dtype=torch.long)
-    val_tag_ids = torch.tensor(val_tag_ids, dtype=torch.long)
-
-    # Create DataLoader for validation data
-    val_data = TensorDataset(val_input_ids, val_attention_masks, val_tag_ids)
-    val_dataloader = DataLoader(val_data, batch_size=32)
-
     # Load BERT model and initialize the BERT+BiLSTM+CRF model
-    bert_model = BertModel.from_pretrained("bert-base-chinese").to(device)
-    lstm_hidden_dim = 128
+    bert_model = BertModel.from_pretrained("bert-base-chinese")
+    lstm_hidden_dim = 256
     model = BertBiLSTMCRF(bert_model, num_tags, lstm_hidden_dim, device).to(device)
 
     # Define optimizer and learning rate scheduler
-    optimizer = AdamW(model.parameters(), lr=3e-5)
-    total_steps = len(train_dataloader) * epochs
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+    optimizer = AdamW(model.parameters(), lr=2e-5)
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=1000)
 
-    # Define evaluation function
-    def evaluate(model, dataloader, device):
-        model.eval()
-        true_labels, pred_labels = [], []
+    tokens, labels = data_processor.read_bio_data(train_file)
+    input_ids, attention_masks, tag_ids = data_processor.tokenize_and_prepare_data(tokens, labels)
+    train_data = TensorDataset(torch.tensor(input_ids, dtype=torch.long), torch.tensor(attention_masks, dtype=torch.long), torch.tensor(tag_ids, dtype=torch.long))
+    train_loader = DataLoader(train_data, shuffle=True, batch_size=batch_size)
 
-        with torch.no_grad():
-            for batch in dataloader:
-                input_ids, attention_masks, tag_ids = tuple(t.to(device) for t in batch)
-                predictions = model(input_ids, attention_masks)
-
-                for i, pred in enumerate(predictions):
-                    cur_true_labels = tag_ids[i].cpu().tolist()
-                    cur_pred_labels = pred
-                    cur_attention_mask = attention_masks[i].cpu().tolist()
-
-                    # Remove padding tokens
-                    cur_true_labels = [label for idx, label in enumerate(cur_true_labels) if cur_attention_mask[idx] != 0]
-                    cur_pred_labels = [label for idx, label in enumerate(cur_pred_labels) if cur_attention_mask[idx] != 0]
-
-                    true_labels.extend(cur_true_labels)
-                    pred_labels.extend(cur_pred_labels)
-
-        return true_labels, pred_labels
+    val_tokens, val_labels = data_processor.read_bio_data(val_file)
+    val_input_ids, val_attention_masks, val_tag_ids = data_processor.tokenize_and_prepare_data(val_tokens, val_labels)
+    val_data = TensorDataset(torch.tensor(val_input_ids, dtype=torch.long), torch.tensor(val_attention_masks, dtype=torch.long), torch.tensor(val_tag_ids, dtype=torch.long))
+    val_loader = DataLoader(val_data, shuffle=False, batch_size=batch_size)
 
     # Training loop
     for epoch in range(epochs):
         model.train()
         total_loss = 0
-
-        for batch in train_dataloader:
-            input_ids, attention_masks, tag_ids = tuple(t.to(device) for t in batch)
-
+        for batch in train_loader:
+            batch = tuple(t.to(device) for t in batch)
+            b_input_ids, b_attention_masks, b_tags = batch
             model.zero_grad()
-            loss = model(input_ids, attention_masks, tags=tag_ids)
+            outputs = model(b_input_ids, b_attention_masks, tags=b_tags)
+            loss = outputs["loss"]
             loss.backward()
-
             total_loss += loss.item()
-
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             scheduler.step()
 
-        avg_train_loss = total_loss / len(train_dataloader)
-        print(f"Epoch {epoch+1}, Loss: {avg_train_loss:.4f}")
+        avg_train_loss = total_loss / len(train_loader)
+        print("Epoch: {}, Training Loss: {}".format(epoch + 1, avg_train_loss))
 
         # Evaluate on validation data
-        true_labels, pred_labels = evaluate(model, val_dataloader, device)
-        print(classification_report(true_labels, pred_labels, target_names=label_map.keys()))
+        model.eval()
+        val_predictions, true_labels = [], []
 
-    print("Training complete!")
+        for batch in val_loader:
+            batch = tuple(t.to(device) for t in batch)
+            b_input_ids, b_attention_masks, b_tags = batch
+            with torch.no_grad():
+                outputs = model(b_input_ids, b_attention_masks)
 
-    # Save model weights
+            # Remove padding part in the predictions
+            for pred, mask in zip(outputs["predictions"], b_attention_masks):
+                pred = [p for p, m in zip(pred, mask) if m==1]
+                val_predictions.extend(pred)
+
+            # Remove padding part in the true labels
+            b_tags = b_tags.view(-1).cpu().numpy().tolist()
+            true_labels_batch = [tag for tag, mask in zip(b_tags, b_attention_masks.view(-1)) if mask==1]
+            true_labels.extend(true_labels_batch)
+
+        print("Validation Accuracy: {}".format(classification_report(true_labels, val_predictions)))
+
+    # Save the model weights
     torch.save(model.state_dict(), model_weights_path)
 
+
+# Execute the main function if the script is run as the main program
 if __name__ == "__main__":
-    train_file = "../data/processed/train_bio.txt"
-    val_file = "../data/processed/val_bio.txt"
+    train_file = "/content/train_bio.txt"
+    val_file = "/content/val_bio.txt"
     batch_size = 32
     epochs = 3
     model_weights_path = "bert_bilstm_crf_model_weights.pth"

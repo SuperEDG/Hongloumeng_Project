@@ -1,37 +1,64 @@
-# data_loader.py
-
-import json
+import torch
+from torch.utils.data import Dataset, DataLoader
 from transformers import GPT2Tokenizer
+import pandas as pd
 
-class DataLoader:
-    def __init__(self, file_path):
-        self.file_path = file_path
-        self.tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+class DialogueDataset(Dataset):
+    def __init__(self, characters, questions, responses, tokenizer, max_length):
+        self.characters = characters
+        self.questions = questions
+        self.responses = responses
+        self.tokenizer = tokenizer
+        self.max_length = max_length
 
-    def load_dataset(self):
-        # Open and read the JSON file
-        with open(self.file_path, 'r', encoding='utf-8') as file:
-            data = json.load(file)
+    def __len__(self):
+        return len(self.characters)
 
-        return data
+    def __getitem__(self, idx):
+        character = self.characters[idx]
+        question = self.questions[idx]
+        response = self.responses[idx]
+        
+        inputs = f"Character: {character}\nQuestion: {question}\nResponse: {response}"
+        encoded = self.tokenizer.encode_plus(
+            inputs,
+            add_special_tokens=True,
+            max_length=self.max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors='pt'
+        )
+        return {
+            'input_ids': encoded['input_ids'].flatten(),
+            'attention_mask': encoded['attention_mask'].flatten()
+        }
 
-    def prepare_input_data(self, data):
-        inputs, responses = [], []
+def create_data_loader(characters, questions, responses, tokenizer, max_length, batch_size):
+    dataset = DialogueDataset(
+        characters,
+        questions,
+        responses,
+        tokenizer,
+        max_length
+    )
 
-        for dialog in data:
-            character = dialog["Character"]
-            question = dialog["Question"]
-            response = dialog["Response"]
+    return DataLoader(
+        dataset,
+        batch_size=batch_size
+    )
 
-            # Format the dialogue
-            formatted_dialog = f'Character: {character}\nQuestion: {question}\nResponse: {response}'
+# 加载数据
+data = pd.read_csv('dialogues.csv')
 
-            # Encode the dialogue
-            encoded_dialog = self.tokenizer.encode_plus(formatted_dialog, return_tensors='pt')
+# 初始化分词器
+tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
-            # Transform to the format that model needs
-            inputs.append(encoded_dialog['input_ids'])
-            responses.append(encoded_dialog['attention_mask'])
-
-        return inputs, responses
-
+# 创建DataLoader
+data_loader = create_data_loader(
+    data['Character'].tolist(),
+    data['Question'].tolist(),
+    data['Response'].tolist(),
+    tokenizer,
+    max_length=128,
+    batch_size=32
+)
