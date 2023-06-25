@@ -15,14 +15,14 @@ groups = {
 }
 
 
-def plot_tsne_series(X, y, perplexies, n_iter=1000, alpha=0.1, palette=None):
+def plot_tsne_series(X, y, perplexies, n_iter=5000, alpha=0.1, palette=None):
 
     # we need to filter due to the t-SNE limitation.
     perplexies = list(filter(lambda item: item < len(X), perplexies))
 
     embs_X = []
     for p in perplexies:
-        tsne = TSNE(n_components=2, learning_rate='auto', init='random', perplexity=p, n_iter=n_iter)
+        tsne = TSNE(n_components=2, learning_rate='auto', init='random', perplexity=p, n_iter=n_iter, random_state=0)
         emb_X = tsne.fit_transform(X)
         embs_X.append(emb_X)
 
@@ -33,14 +33,17 @@ def plot_tsne_series(X, y, perplexies, n_iter=1000, alpha=0.1, palette=None):
     tsne_data = pd.DataFrame()
     tsne_data["comp-1"] = c1
     tsne_data["comp-2"] = c2
-    tsne_data["col"] = arr
-    tsne_data["y"] = list(chain(*[y for p in perplexies]))
+    tsne_data["perplexy"] = arr
+    tsne_data["Groups"] = list(chain(*[y for p in perplexies]))
 
-    g = sns.FacetGrid(tsne_data, col="col", hue="y", palette=palette)
+    g = sns.FacetGrid(tsne_data, col="perplexy", hue="Groups", palette=palette)
     g.map(sns.scatterplot, "comp-1", "comp-2", alpha=alpha)
-    g.add_legend()
 
-    plt.show()
+    plt.legend(loc='upper left')
+
+    #plt.show()
+    plt.gcf().set_size_inches(8, 6)
+    plt.savefig("tsne.png", bbox_inches='tight', dpi=200)
 
 
 def normalize(arr, t_min, t_max):
@@ -53,12 +56,16 @@ def normalize(arr, t_min, t_max):
     return norm_arr
 
 
+def __make_group_name(v):
+    return v[0] + " et. al."
+
+
 def __find_group(name):
     assert(isinstance(name, str))
     for k, v in groups.items():
         if name in v:
             # group name.
-            return ",".join(v)
+            return __make_group_name(v)
     return "_Other"
 
 
@@ -74,9 +81,9 @@ X = np.array(X)
 plot_tsne_series(X=X, y=[__find_group(i) for i in y], perplexies=[2], n_iter=500, alpha=0.7,
                  palette={
                     "_Other": "gray",
-                    ','.join(groups["g1"]): "red",
-                    ','.join(groups["g2"]): "blue",
-                    ','.join(groups["g3"]): "green",
-                    ','.join(groups["g4"]): "orange",
-                    ','.join(groups["g5"]): "purple",
+                    __make_group_name(groups["g1"]): "red",
+                    __make_group_name(groups["g2"]): "blue",
+                    __make_group_name(groups["g3"]): "green",
+                    __make_group_name(groups["g4"]): "orange",
+                    __make_group_name(groups["g5"]): "purple",
                  })
