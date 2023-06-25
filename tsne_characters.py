@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
 
 groups = {
-    'g1': ['Xiren', 'Wangfuren', 'Qinkeqin'],
+    'g1': ['Xiren', 'Qinkeqin'],
     'g2': ['Jiabaoyu', 'Liwan', 'Jiatanchun'],
     'g3': ['Lindaiyu', 'Qingwen', 'Xingfuren'],
     'g4': ['Miaoyu', 'Jiaxichun', 'Xuebaochai'],
