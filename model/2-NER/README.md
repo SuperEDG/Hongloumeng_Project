@@ -27,7 +27,6 @@ The 2-NER directory includes several Python files that perform various functions
 
 Here's an example of the output CSV file, formatted using markdown:
 
-```markdown
 |    | Name   | Dialogue                   |
 |----|--------|----------------------------|
 | 1  | 贾宝玉 | 妹妹可曾读书？               |
@@ -35,6 +34,5 @@ Here's an example of the output CSV file, formatted using markdown:
 | 3  | 贾宝玉 | 妹妹尊名是那两个字？             |
 | 4  | 林黛玉 | 无字。                     |
 | 5  | 贾宝玉 | 我送妹妹一妙字，莫若`颦颦-二字极妙。 |
-```
 
 These scripts provide an end-to-end solution for training a NER model, augmenting data, and extracting dialogues from the text.
