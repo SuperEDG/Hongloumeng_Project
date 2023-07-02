@@ -171,6 +171,6 @@ if __name__ == "__main__":
     train_file = "/content/train_bio.txt"
     val_file = "/content/val_bio.txt"
     batch_size = 32
-    epochs = 3
+    epochs = 5
     model_weights_path = "bert_bilstm_crf_model_weights.pth"
     main(train_file, val_file, batch_size, epochs, model_weights_path)

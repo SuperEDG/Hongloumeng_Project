@@ -61,9 +61,9 @@ def data_augmentation(saved_file):
 
 
 if __name__ == "__main__":
-    saved_file = r"C:\Users\Admin\Desktop\Project\Hongloumeng_Project\data\processed\Component2-NER\label_honglou.txt"
+    saved_file = "./data/processed/Component2-NER/label_honglou.txt"
     speakers = data_augmentation(saved_file)
-    new_file = r"C:\Users\Admin\Desktop\Project\Hongloumeng_Project\data\processed\Component2-NER\label_honglou_new.txt"  # New file name
+    new_file = "./data/processed/processed/Component2-NER/label_honglou_new.txt"  # New file name
     # Write the generated data to a new file
     with open(new_file, "w", encoding="utf-8") as f:
         for res in speakers:

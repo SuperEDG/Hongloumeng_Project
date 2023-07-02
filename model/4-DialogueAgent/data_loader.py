@@ -1,64 +1,92 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-from transformers import GPT2Tokenizer
+from tokenizers import BertWordPieceTokenizer
+from transformers import BertTokenizer
+from transformers import BertTokenizerFast
 import pandas as pd
+import pickle
+import jieba.analyse
+from tqdm import tqdm
+from transformers import GPT2TokenizerFast, GPT2LMHeadModel
+import logging
+import numpy as np
 
-class DialogueDataset(Dataset):
-    def __init__(self, characters, questions, responses, tokenizer, max_length):
-        self.characters = characters
-        self.questions = questions
-        self.responses = responses
-        self.tokenizer = tokenizer
-        self.max_length = max_length
 
-    def __len__(self):
-        return len(self.characters)
+def create_logger(log_path):
+    """
+    将日志输出到日志文件和控制台
+    """
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
 
-    def __getitem__(self, idx):
-        character = self.characters[idx]
-        question = self.questions[idx]
-        response = self.responses[idx]
-        
-        inputs = f"Character: {character}\nQuestion: {question}\nResponse: {response}"
-        encoded = self.tokenizer.encode_plus(
-            inputs,
-            add_special_tokens=True,
-            max_length=self.max_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors='pt'
-        )
-        return {
-            'input_ids': encoded['input_ids'].flatten(),
-            'attention_mask': encoded['attention_mask'].flatten()
-        }
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s')
 
-def create_data_loader(characters, questions, responses, tokenizer, max_length, batch_size):
-    dataset = DialogueDataset(
-        characters,
-        questions,
-        responses,
-        tokenizer,
-        max_length
-    )
+    # 创建一个handler，用于写入日志文件
+    file_handler = logging.FileHandler(
+        filename=log_path)
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.INFO)
+    logger.addHandler(file_handler)
 
-    return DataLoader(
-        dataset,
-        batch_size=batch_size
-    )
+    # 创建一个handler，用于将日志输出到控制台
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    console.setFormatter(formatter)
+    logger.addHandler(console)
 
-# 加载数据
-data = pd.read_csv('dialogues.csv')
+    return logger
 
-# 初始化分词器
-tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
-# 创建DataLoader
-data_loader = create_data_loader(
-    data['Character'].tolist(),
-    data['Question'].tolist(),
-    data['Response'].tolist(),
-    tokenizer,
-    max_length=128,
-    batch_size=32
-)
+def preprocess(vocab_path, log_path, train_path, save_path):
+    """
+    对原始语料进行tokenize，将每段对话处理成如下形式："[CLS]utterance1[SEP]utterance2[SEP]utterance3[SEP]"
+    """
+    # 初始化日志对象
+    logger = create_logger(log_path)
+
+    # 初始化tokenizer
+    tokenizer = BertTokenizerFast(vocab_file=vocab_path, sep_token="[SEP]", pad_token="[PAD]", cls_token="[CLS]")
+    sep_id = tokenizer.sep_token_id
+    cls_id = tokenizer.cls_token_id
+    logger.info("preprocessing data,data path:{}, save path:{}".format(train_path, save_path))
+
+    # 读取训练数据集
+    with open(train_path, 'rb') as f:
+        data = f.read().decode("utf-8")
+
+    # 需要区分linux和windows环境下的换行符
+    if "\r\n" in data:
+        train_data = data.split("\r\n\r\n")
+    else:
+        train_data = data.split("\n\n")
+    logger.info("there are {} dialogue in dataset".format(len(train_data)))
+
+    # 开始进行tokenize
+    # 保存所有的对话数据,每条数据的格式为："[CLS]utterance1[SEP]utterance2[SEP]utterance3[SEP]"
+    dialogue_len = []  # 记录所有对话tokenize之后的长度，用于统计中位数与均值
+    dialogue_list = []
+    for index, dialogue in enumerate(tqdm(train_data)):
+        if "\r\n" in data:
+            utterances = dialogue.split("\r\n")
+        else:
+            utterances = dialogue.split("\n")
+
+        input_ids = [cls_id]  # 每个dialogue以[CLS]开头
+        for utterance in utterances:
+            input_ids += tokenizer.encode(utterance, add_special_tokens=False)
+            input_ids.append(sep_id)  # 每个utterance之后添加[SEP]，表示utterance结束
+        dialogue_len.append(len(input_ids))
+        dialogue_list.append(input_ids)
+    len_mean = np.mean(dialogue_len)
+    len_median = np.median(dialogue_len)
+    len_max = np.max(dialogue_len)
+    with open(save_path, "wb") as f:
+        pickle.dump(dialogue_list, f)
+    logger.info("finish preprocessing data,the result is stored in {}".format(save_path))
+    logger.info("mean of dialogue len:{},median of dialogue len:{},max len:{}".format(len_mean, len_median, len_max))
+
+if __name__ == "__main__":
+    train_path = "/content/data.txt"
+    save_path = "/content/train.pkl"
+    log_path = "/content/log.txt"
+    vocab_path = "/content/vocab.txt"
+    preprocess(vocab_path, log_path, train_path, save_path)

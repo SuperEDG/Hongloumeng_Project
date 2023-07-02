@@ -55,11 +55,11 @@ def split_data(output_file, train_file, val_file, test_file, train_ratio=0.7, va
         f.write('\n\n'.join(test_data) + '\n\n')
 
 if __name__ == "__main__":
-    input_file = r"C:\Users\Admin\Desktop\Project\Hongloumeng_Project\data\processed\Component2-NER\label_honglou.txt"
-    output_file = r"C:\Users\Admin\Desktop\Project\Hongloumeng_Project\data\processed\bio_data.txt"
-    train_file = r"C:\Users\Admin\Desktop\Project\Hongloumeng_Project\data\processed\train_bio.txt"
-    val_file = r"C:\Users\Admin\Desktop\Project\Hongloumeng_Project\data\processed\val_bio.txt"
-    test_file = r"C:\Users\Admin\Desktop\Project\Hongloumeng_Project\data\processed\test_bio.txt"
+    input_file = "./data/processed/Component2-NERlabel_honglou.txt"
+    output_file = "./data/processed/bio_data.txt"
+    train_file = "./data/processed/train_bio.txt"
+    val_file = "./data/processed/val_bio.txt"
+    test_file = "./data/processed/test_bio.txt"
 
     process_data(input_file, output_file)
     print(f"Data has been processed and saved to {output_file}")

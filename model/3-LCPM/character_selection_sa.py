@@ -6,7 +6,7 @@ import random
 import math
 
 # Load data
-data = pd.read_csv(r'C:\Users\Admin\Desktop\Project\Hongloumeng_Project\model\LCPM\LCPM.csv')
+data = pd.read_csv('./data/processed/component3-LCPM/LCPM.csv')
 names = data['name']
 traits = data.drop('name', axis=1)
 
