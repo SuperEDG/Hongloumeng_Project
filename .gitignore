@@ -4,3 +4,4 @@ data/processed/Component2-NER/bio_data.txt
 data/processed/Component2-NER/test_bio.txt
 data/processed/Component2-NER/train_bio.txt
 data/processed/Component2-NER/val_bio.txt
+*.pth
