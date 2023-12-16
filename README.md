@@ -1,8 +1,13 @@
 # Dream of the Red Chamber Chatbot Project
 
-## Abstract
+![LCTs](https://github.com/SuperEDG/Hongloumeng_Project/assets/14871187/eaca7916-b1a3-4d0a-8653-6e7b5e28eedf)
+> Example of the character Lin Daiyu's personality traits from《红楼梦》(Dream of the Red Chamber) and associated dialogues. On the left, Lin Daiyu's personality traits are displayed. On the right, representative conversations that reflect these personality traits are presented.
 
-This project aims to enhance chatbot engagement by leveraging unique personalities and speech patterns extracted from character dialogues in literary works. We utilized 《红楼梦》(Dream of the Red Chamber) as a data source, developed an automated system for efficient extraction and mapping of character dialogues and personality traits. This approach results in chatbots more resembling human conversation, proven by evaluations. All datasets and models are available in this GitHub repository.
+This repository provides a source code for paper [Dialogue Agents with Literary Character Personality Traits](https://eprints.ncl.ac.uk/293995), including datasets and models utilized in studies.
+This project aims to enhance chatbot engagement by leveraging unique personalities and speech patterns extracted from character dialogues in literary works. 
+
+We utilized 《红楼梦》(Dream of the Red Chamber) as a data source, developed an automated system for efficient extraction and mapping of character dialogues and personality traits. 
+This approach results in chatbots more resembling human conversation, proven by evaluations. 
 
 ## Repository Structure
 
@@ -43,6 +48,14 @@ To use this system with a new book:
 
 5. **Chatbot Model Construction**: Use the constructed dataset to build a generative model in `model/4-DialogueAgent`.
 
-## License
+## References
 
-This project is under the MIT license. Refer to the LICENSE file for more details.
+```bibtex
+@inproceedings{zhao2023dialogue,
+  title={Dialogue Agents with Literary Character Personality Traits},
+  author={Zhao, Junzhe and Liang, Huizhi and Rusnachenko, Nicolay},
+  booktitle={The 22nd IEEE/WIC International Conference on Web Intelligence and Intelligent Agent Technology},
+  year={2023},
+  organization={Newcastle University}
+}
+```
